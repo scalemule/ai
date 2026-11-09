@@ -49,8 +49,9 @@ await ai.operations.updateSettings('summarize', {
 ```
 
 Errors: `ACTIVATION_UNAVAILABLE` (nothing configured), `USER_CHOICE_DISABLED`, `OPTION_NOT_ALLOWED`,
-`OPTION_UNKNOWN`, `ACCOUNT_OVERRIDE_DISABLED`, `ACCOUNT_ADMIN_REQUIRED`, `USER_PRINCIPAL_REQUIRED`
-(service keys cannot hold a preference).
+`OPTION_UNKNOWN`, `OFFERING_RETIRED`, `ACCOUNT_OVERRIDE_DISABLED`, `ACCOUNT_ADMIN_REQUIRED`,
+`USER_PRINCIPAL_REQUIRED` (service keys cannot hold a preference). A run whose configuration changed
+between queue and execution ends with `ACTIVATION_CHANGED`; simply run it again.
 
 Most apps should not use this package directly:
 

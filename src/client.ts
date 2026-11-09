@@ -26,8 +26,9 @@ const DEFAULT_WAIT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_MS = 750
 const MAX_POLL_MS = 5_000
 const CREATE_RETRIES = 2
-const OPERATION_KEY = /^[a-z0-9][a-z0-9_-]{0,99}$/
+const OPERATION_KEY = /^[a-z0-9_-]{1,100}$/
 const OPTION_KEY = /^[a-z0-9][a-z0-9_-]{0,39}$/
+const MAX_ENABLED_OPTIONS = 32
 
 export interface ScaleMuleAiOptions {
   transport: AiTransport
@@ -395,25 +396,28 @@ export class ScaleMuleAi {
       if (!OPERATION_KEY.test(operation ?? '')) return { data: null, error: localError('INPUT_INVALID', 'operation must be a lowercase operation key') }
       if (!isRecord(patch)) return { data: null, error: localError('INPUT_INVALID', 'patch must be an object') }
       const body: Record<string, unknown> = {}
-      if ('default_option' in patch) {
+      if (patch.default_option !== undefined) {
         if (patch.default_option !== null && (typeof patch.default_option !== 'string' || !OPTION_KEY.test(patch.default_option))) {
           return { data: null, error: localError('INPUT_INVALID', 'default_option must be a lowercase option key or null') }
         }
         body.default_option = patch.default_option
       }
-      if ('allow_user_choice' in patch) {
+      if (patch.allow_user_choice !== undefined) {
         if (patch.allow_user_choice !== null && typeof patch.allow_user_choice !== 'boolean') {
           return { data: null, error: localError('INPUT_INVALID', 'allow_user_choice must be a boolean or null') }
         }
         body.allow_user_choice = patch.allow_user_choice
       }
-      if ('enabled_options' in patch) {
+      if (patch.enabled_options !== undefined) {
         if (patch.enabled_options !== null && (!Array.isArray(patch.enabled_options) || !patch.enabled_options.every((key) => typeof key === 'string' && OPTION_KEY.test(key)))) {
           return { data: null, error: localError('INPUT_INVALID', 'enabled_options must be lowercase option keys or null') }
         }
-        body.enabled_options = patch.enabled_options
+        if (patch.enabled_options !== null && patch.enabled_options.length > MAX_ENABLED_OPTIONS) {
+          return { data: null, error: localError('INPUT_INVALID', `enabled_options may list at most ${MAX_ENABLED_OPTIONS} options`) }
+        }
+        body.enabled_options = patch.enabled_options === null ? null : [...new Set(patch.enabled_options)]
       }
-      if ('status' in patch) {
+      if (patch.status !== undefined) {
         if (patch.status !== 'active' && patch.status !== 'paused') {
           return { data: null, error: localError('INPUT_INVALID', "status must be 'active' or 'paused'") }
         }

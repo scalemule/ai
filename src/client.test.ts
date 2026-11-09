@@ -269,7 +269,11 @@ describe('ScaleMuleAi.operations', () => {
     expect((await ai.operations.updateSettings('summarize', {})).error?.code).toBe('INPUT_INVALID')
     expect((await ai.operations.updateSettings('summarize', { status: 'retired' as 'active' })).error?.code).toBe('INPUT_INVALID')
     expect((await ai.operations.updateSettings('summarize', { agent_id: 'x' } as unknown as Record<string, never>)).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.updateSettings('summarize', { enabled_options: Array.from({ length: 33 }, (_, i) => `o${i}`) })).error?.code).toBe('INPUT_INVALID')
     expect(requests).toHaveLength(0)
+    // Unknown fields are dropped, never forwarded; explicit undefined means unchanged.
+    await ai.operations.updateSettings('summarize', { agent_id: 'x', default_option: undefined, status: 'active' } as unknown as { status: 'active' })
+    expect(requests[0]?.body).toEqual({ status: 'active' })
   })
 
   it('sends null to clear settings and omits untouched fields', async () => {
@@ -280,8 +284,10 @@ describe('ScaleMuleAi.operations', () => {
     expect(result.error).toBeNull()
     expect(requests[0]).toMatchObject({ method: 'PUT', path: '/v1/ai/operations/summarize/settings' })
     expect(requests[0]?.body).toEqual({ default_option: null, enabled_options: ['fast', 'coral'], status: 'paused' })
+    await ai.operations.updateSettings('summarize', { allow_user_choice: null, enabled_options: null })
+    expect(requests[1]?.body).toEqual({ allow_user_choice: null, enabled_options: null })
     await ai.operations.getSettings('summarize')
-    expect(requests[1]).toMatchObject({ method: 'GET', path: '/v1/ai/operations/summarize/settings' })
+    expect(requests[2]).toMatchObject({ method: 'GET', path: '/v1/ai/operations/summarize/settings' })
   })
 
   it('passes facade error codes through', async () => {
