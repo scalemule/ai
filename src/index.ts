@@ -7,6 +7,14 @@ export { SseParser, readSse } from './sse'
 export type { SseMessage } from './sse'
 export { AI_TERMINAL_STATUSES, isTerminalStatus } from './types'
 export type {
+  AiOperation,
+  AiOperationOption,
+  AiOperationRequestOptions,
+  AiOperationSettings,
+  AiOperationSettingsPatch,
+  AiAccountOperationPolicy,
+  AiApplicationOperationPolicy,
+  AiSelectionSource,
   AiRunStatus,
   AiErrorClass,
   AiRunError,

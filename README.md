@@ -24,6 +24,35 @@ else console.log(data.summary, data.truncated)
 Lower level: `ai.runs.create()`, `ai.runs.get()`, `ai.runs.wait()`, `ai.runs.cancel()` and
 `for await (const event of ai.runs.events(runId))`.
 
+## Choosing which agent runs an operation
+
+Applications approve **options** (an agent + model pair under a stable key such as `coral`), set one
+as the application default, and let accounts override it. End users pick among the options their
+account enabled. Nothing on the client ever names an agent, model, provider key or prompt.
+
+```ts
+const { data: operations } = await ai.operations.list()
+// [{ operation: 'summarize', selected: 'coral', selection_source: 'application',
+//    user_choice_allowed: true, options: [{ key: 'coral', name: 'Coral', selectable: true, ... }] }]
+
+await ai.operations.setPreference('summarize', 'fast')   // the signed-in user's own choice
+await ai.operations.clearPreference('summarize')         // back to the account default
+
+// Account admins:
+await ai.operations.getSettings('summarize')
+await ai.operations.updateSettings('summarize', {
+  default_option: 'fast',          // or null to inherit the application default again
+  allow_user_choice: true,         // or null to inherit
+  enabled_options: ['fast', 'coral'],
+  status: 'active',                // 'paused' switches the operation off for this account
+})
+```
+
+Errors: `ACTIVATION_UNAVAILABLE` (nothing configured), `USER_CHOICE_DISABLED`, `OPTION_NOT_ALLOWED`,
+`OPTION_UNKNOWN`, `OFFERING_RETIRED`, `ACCOUNT_OVERRIDE_DISABLED`, `ACCOUNT_ADMIN_REQUIRED`,
+`USER_PRINCIPAL_REQUIRED` (service keys cannot hold a preference). A run whose configuration changed
+between queue and execution ends with `ACTIVATION_CHANGED`; simply run it again.
+
 Most apps should not use this package directly:
 
 - Browser or universal code: `@scalemule/sdk` exposes the same API as `sm.ai`.

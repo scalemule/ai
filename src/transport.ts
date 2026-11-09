@@ -4,7 +4,7 @@
  */
 
 export interface AiTransportRequest {
-  method: 'GET' | 'POST'
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
   /** Path relative to the gateway origin, e.g. `/v1/ai/runs`. */
   path: string
   body?: unknown

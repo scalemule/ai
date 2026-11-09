@@ -226,3 +226,74 @@ describe('ScaleMuleAi resilience', () => {
     expect(requests).toHaveLength(2)
   })
 })
+
+describe('ScaleMuleAi.operations', () => {
+  const operation = {
+    operation: 'summarize',
+    version: 1,
+    kind: 'typed',
+    description: 'Summarize text',
+    available: true,
+    selected: 'coral',
+    selection_source: 'application',
+    user_choice_allowed: true,
+    options: [{ key: 'coral', name: 'Coral', description: '', is_default: true, selectable: true }],
+  }
+
+  it('lists operations for the account', async () => {
+    const { transport, requests } = fakeTransport(() => jsonResponse(200, { success: true, data: [operation] }))
+    const ai = new ScaleMuleAi({ transport, accountId: 'acct-1' })
+    const result = await ai.operations.list()
+    expect(result.error).toBeNull()
+    expect(result.data?.[0]?.selected).toBe('coral')
+    expect(requests[0]).toMatchObject({ method: 'GET', path: '/v1/ai/operations', headers: { 'x-requested-account-id': 'acct-1' } })
+  })
+
+  it('sets and clears a preference by option key only', async () => {
+    const { transport, requests } = fakeTransport(() => jsonResponse(200, { success: true, data: { ...operation, selected: 'fast', selection_source: 'user', user_preference: 'fast' } }))
+    const ai = new ScaleMuleAi({ transport })
+    const set = await ai.operations.setPreference('summarize', 'fast')
+    expect(set.data?.user_preference).toBe('fast')
+    expect(requests[0]).toMatchObject({ method: 'PUT', path: '/v1/ai/operations/summarize/preference', body: { option: 'fast' } })
+    await ai.operations.clearPreference('summarize')
+    expect(requests[1]).toMatchObject({ method: 'DELETE', path: '/v1/ai/operations/summarize/preference' })
+    expect(requests[1]?.body).toBeUndefined()
+  })
+
+  it('rejects malformed keys locally and never sends agent or model identifiers', async () => {
+    const { transport, requests } = fakeTransport(() => jsonResponse(200, { success: true, data: operation }))
+    const ai = new ScaleMuleAi({ transport })
+    expect((await ai.operations.setPreference('Summarize', 'fast')).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.setPreference('summarize', '../x')).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.setPreference('summarize', 'ключ')).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.updateSettings('summarize', {})).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.updateSettings('summarize', { status: 'retired' as 'active' })).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.updateSettings('summarize', { agent_id: 'x' } as unknown as Record<string, never>)).error?.code).toBe('INPUT_INVALID')
+    expect((await ai.operations.updateSettings('summarize', { enabled_options: Array.from({ length: 33 }, (_, i) => `o${i}`) })).error?.code).toBe('INPUT_INVALID')
+    expect(requests).toHaveLength(0)
+    // Unknown fields are dropped, never forwarded; explicit undefined means unchanged.
+    await ai.operations.updateSettings('summarize', { agent_id: 'x', default_option: undefined, status: 'active' } as unknown as { status: 'active' })
+    expect(requests[0]?.body).toEqual({ status: 'active' })
+  })
+
+  it('sends null to clear settings and omits untouched fields', async () => {
+    const settings = { ...operation, account: { default_option: null, allow_user_choice: null, status: 'active', enabled_options: [] }, application: { default_option: 'coral', allow_account_override: true, allow_user_choice: true, status: 'active' } }
+    const { transport, requests } = fakeTransport(() => jsonResponse(200, { success: true, data: settings }))
+    const ai = new ScaleMuleAi({ transport })
+    const result = await ai.operations.updateSettings('summarize', { default_option: null, enabled_options: ['fast', 'coral'], status: 'paused' })
+    expect(result.error).toBeNull()
+    expect(requests[0]).toMatchObject({ method: 'PUT', path: '/v1/ai/operations/summarize/settings' })
+    expect(requests[0]?.body).toEqual({ default_option: null, enabled_options: ['fast', 'coral'], status: 'paused' })
+    await ai.operations.updateSettings('summarize', { allow_user_choice: null, enabled_options: null })
+    expect(requests[1]?.body).toEqual({ allow_user_choice: null, enabled_options: null })
+    await ai.operations.getSettings('summarize')
+    expect(requests[2]).toMatchObject({ method: 'GET', path: '/v1/ai/operations/summarize/settings' })
+  })
+
+  it('passes facade error codes through', async () => {
+    const { transport } = fakeTransport(() => jsonResponse(409, { success: false, error: { code: 'USER_CHOICE_DISABLED', message: 'no' } }))
+    const ai = new ScaleMuleAi({ transport })
+    const result = await ai.operations.setPreference('summarize', 'fast')
+    expect(result.error).toMatchObject({ code: 'USER_CHOICE_DISABLED', status: 409 })
+  })
+})
