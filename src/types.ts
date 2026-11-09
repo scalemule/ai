@@ -157,3 +157,80 @@ export interface SummarizeOptions extends AiRequestOptions {
   /** Server-side wait before the first response (default 20000 ms, the maximum). */
   waitMs?: number
 }
+
+// ---------------------------------------------------------------------------
+// Operation selection (ADR-2026-11-09): option keys only, never agent/model ids
+// ---------------------------------------------------------------------------
+
+/** One option an account may run an operation with. */
+export interface AiOperationOption {
+  key: string
+  name: string
+  description: string
+  /** The option the account currently inherits or chose as its default. */
+  is_default: boolean
+  /** Whether the signed-in user may pick this option as a preference. */
+  selectable: boolean
+}
+
+export type AiSelectionSource = 'user' | 'account' | 'account_manual' | 'application'
+
+/** An operation as configured for the caller's account. */
+export interface AiOperation {
+  operation: string
+  version: number
+  kind: string
+  description: string
+  /** False when the operation would fail closed with ACTIVATION_UNAVAILABLE. */
+  available: boolean
+  /** Option key that runs for the caller right now. */
+  selected?: string
+  selection_source?: AiSelectionSource | string
+  /** Whether the caller may set a preference. */
+  user_choice_allowed: boolean
+  /** The caller's own preference, when set. */
+  user_preference?: string
+  options: AiOperationOption[]
+}
+
+export interface AiAccountOperationPolicy {
+  default_option: string | null
+  /** `null` inherits the application policy. */
+  allow_user_choice: boolean | null
+  status: 'active' | 'paused' | string
+  enabled_options: string[]
+}
+
+export interface AiApplicationOperationPolicy {
+  default_option: string | null
+  allow_account_override: boolean
+  allow_user_choice: boolean
+  status: 'active' | 'paused' | string
+}
+
+/** Account settings view for account admins. */
+export interface AiOperationSettings {
+  operation: string
+  version: number
+  available: boolean
+  selected?: string
+  selection_source?: AiSelectionSource | string
+  options: AiOperationOption[]
+  account: AiAccountOperationPolicy
+  application: AiApplicationOperationPolicy
+}
+
+/**
+ * Account settings change. Omitted fields stay unchanged; `null` clears a
+ * field back to "inherit" (`default_option`, `allow_user_choice`) or to no
+ * options (`enabled_options`).
+ */
+export interface AiOperationSettingsPatch {
+  default_option?: string | null
+  allow_user_choice?: boolean | null
+  enabled_options?: string[] | null
+  status?: 'active' | 'paused'
+}
+
+/** Request options for operation catalog and settings calls. */
+export type AiOperationRequestOptions = Omit<AiRequestOptions, 'idempotencyKey'>

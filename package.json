@@ -1,6 +1,6 @@
 {
   "name": "@scalemule/ai",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "ScaleMule AI facade client: typed, durable AI runs over /v1/ai (summarize and friends). Framework-neutral, zero dependencies.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

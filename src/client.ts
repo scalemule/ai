@@ -4,6 +4,10 @@ import type { AiTransport, AiTransportResponse } from './transport'
 import {
   isTerminalStatus,
   type AiError,
+  type AiOperation,
+  type AiOperationRequestOptions,
+  type AiOperationSettings,
+  type AiOperationSettingsPatch,
   type AiRequestOptions,
   type AiResult,
   type AiRun,
@@ -22,6 +26,8 @@ const DEFAULT_WAIT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_MS = 750
 const MAX_POLL_MS = 5_000
 const CREATE_RETRIES = 2
+const OPERATION_KEY = /^[a-z0-9][a-z0-9_-]{0,99}$/
+const OPTION_KEY = /^[a-z0-9][a-z0-9_-]{0,39}$/
 
 export interface ScaleMuleAiOptions {
   transport: AiTransport
@@ -152,7 +158,7 @@ export class ScaleMuleAi {
   }
 
   private async send<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     options: { body?: unknown; headers?: Record<string, string>; signal?: AbortSignal; retries?: number; timeoutMs?: number },
   ): Promise<AiResult<T>> {
@@ -329,6 +335,97 @@ export class ScaleMuleAi {
           }
         },
       }
+    },
+  }
+
+  /**
+   * Operation selection (ADR-2026-11-09). Clients name option keys only; the
+   * platform maps them to agents and models the application approved.
+   */
+  readonly operations = {
+    /** Operations configured for the caller's account, with their options. */
+    list: async (options: AiOperationRequestOptions = {}): Promise<AiResult<AiOperation[]>> => {
+      return this.send<AiOperation[]>('GET', '/operations', {
+        headers: this.headersFor(options),
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+        retries: 1,
+      })
+    },
+
+    /** Set the signed-in user's own preference among the account's enabled options. */
+    setPreference: async (operation: string, option: string, options: AiOperationRequestOptions = {}): Promise<AiResult<AiOperation>> => {
+      if (!OPERATION_KEY.test(operation ?? '')) return { data: null, error: localError('INPUT_INVALID', 'operation must be a lowercase operation key') }
+      if (!OPTION_KEY.test(option ?? '')) return { data: null, error: localError('INPUT_INVALID', 'option must be a lowercase option key') }
+      return this.send<AiOperation>('PUT', `/operations/${encodeURIComponent(operation)}/preference`, {
+        body: { option },
+        headers: this.headersFor(options),
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      })
+    },
+
+    /** Clear the signed-in user's own preference; the account default applies again. */
+    clearPreference: async (operation: string, options: AiOperationRequestOptions = {}): Promise<AiResult<AiOperation>> => {
+      if (!OPERATION_KEY.test(operation ?? '')) return { data: null, error: localError('INPUT_INVALID', 'operation must be a lowercase operation key') }
+      return this.send<AiOperation>('DELETE', `/operations/${encodeURIComponent(operation)}/preference`, {
+        headers: this.headersFor(options),
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      })
+    },
+
+    /** Account settings and the application policy that applies (account admins). */
+    getSettings: async (operation: string, options: AiOperationRequestOptions = {}): Promise<AiResult<AiOperationSettings>> => {
+      if (!OPERATION_KEY.test(operation ?? '')) return { data: null, error: localError('INPUT_INVALID', 'operation must be a lowercase operation key') }
+      return this.send<AiOperationSettings>('GET', `/operations/${encodeURIComponent(operation)}/settings`, {
+        headers: this.headersFor(options),
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+        retries: 1,
+      })
+    },
+
+    /**
+     * Change account settings (account admins). Omitted fields are unchanged;
+     * `null` clears `default_option` / `allow_user_choice` back to inherit and
+     * `enabled_options` to none.
+     */
+    updateSettings: async (operation: string, patch: AiOperationSettingsPatch, options: AiOperationRequestOptions = {}): Promise<AiResult<AiOperationSettings>> => {
+      if (!OPERATION_KEY.test(operation ?? '')) return { data: null, error: localError('INPUT_INVALID', 'operation must be a lowercase operation key') }
+      if (!isRecord(patch)) return { data: null, error: localError('INPUT_INVALID', 'patch must be an object') }
+      const body: Record<string, unknown> = {}
+      if ('default_option' in patch) {
+        if (patch.default_option !== null && (typeof patch.default_option !== 'string' || !OPTION_KEY.test(patch.default_option))) {
+          return { data: null, error: localError('INPUT_INVALID', 'default_option must be a lowercase option key or null') }
+        }
+        body.default_option = patch.default_option
+      }
+      if ('allow_user_choice' in patch) {
+        if (patch.allow_user_choice !== null && typeof patch.allow_user_choice !== 'boolean') {
+          return { data: null, error: localError('INPUT_INVALID', 'allow_user_choice must be a boolean or null') }
+        }
+        body.allow_user_choice = patch.allow_user_choice
+      }
+      if ('enabled_options' in patch) {
+        if (patch.enabled_options !== null && (!Array.isArray(patch.enabled_options) || !patch.enabled_options.every((key) => typeof key === 'string' && OPTION_KEY.test(key)))) {
+          return { data: null, error: localError('INPUT_INVALID', 'enabled_options must be lowercase option keys or null') }
+        }
+        body.enabled_options = patch.enabled_options
+      }
+      if ('status' in patch) {
+        if (patch.status !== 'active' && patch.status !== 'paused') {
+          return { data: null, error: localError('INPUT_INVALID', "status must be 'active' or 'paused'") }
+        }
+        body.status = patch.status
+      }
+      if (Object.keys(body).length === 0) return { data: null, error: localError('INPUT_INVALID', 'Nothing to change') }
+      return this.send<AiOperationSettings>('PUT', `/operations/${encodeURIComponent(operation)}/settings`, {
+        body,
+        headers: this.headersFor(options),
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      })
     },
   }
 
