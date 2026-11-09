@@ -1,0 +1,59 @@
+{
+  "name": "@scalemule/ai",
+  "version": "0.0.1",
+  "description": "ScaleMule AI facade client: typed, durable AI runs over /v1/ai (summarize and friends). Framework-neutral, zero dependencies.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "node -e \"const v=require('./package.json').version; if(!/^0\\.(0|1)\\.\\d+$/.test(v)){console.error('ERR: SDK '+v+' violates patch-only policy (0.0.x or 0.1.x only). See CONTRIBUTING.md SDK versioning section.');process.exit(1)}\" && npm run typecheck && npm test && npm run build",
+    "release": "npm run prepublishOnly && npm publish --access public"
+  },
+  "keywords": [
+    "scalemule",
+    "ai",
+    "summarize",
+    "sdk",
+    "typescript"
+  ],
+  "author": "ScaleMule Inc. <support@scalemule.com>",
+  "license": "MIT",
+  "homepage": "https://scalemule.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scalemule/ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/scalemule/ai/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
