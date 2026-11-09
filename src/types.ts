@@ -115,6 +115,8 @@ export interface EventsOptions {
 }
 
 export interface AiError {
+  /** Server-suggested wait before retrying (from Retry-After or the error body). */
+  retryAfterMs?: number
   code: string
   message: string
   /** HTTP status of the failing response, or 0 when the failure was local (network, abort, timeout). */

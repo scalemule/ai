@@ -36,3 +36,27 @@ describe('createFetchTransport', () => {
     expect(sanitizeHeaders({ 'X-App-Id': 'x', 'X-Custom': 'y' })).toEqual({ 'X-Custom': 'y' })
   })
 })
+
+describe('createFetchTransport lifecycle', () => {
+  it('keeps the abort listener armed until a JSON body is consumed', async () => {
+    const controllerRef: { signal?: AbortSignal } = {}
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      controllerRef.signal = init.signal as AbortSignal
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    const transport = createFetchTransport({ baseUrl: 'https://api.example.com', fetch: fetcher as unknown as typeof fetch })
+    const caller = new AbortController()
+    const response = await transport.send({ method: 'GET', path: '/v1/ai/runs/r', signal: caller.signal })
+    expect(controllerRef.signal?.aborted).toBe(false)
+    caller.abort()
+    expect(controllerRef.signal?.aborted).toBe(true)
+    await response.json()
+  })
+
+  it('blocks every gateway-owned header family', () => {
+    for (const name of ['x-sm-internal-token', 'X-App-Key-Type', 'x-user-email', 'x-member-role-level', 'x-actor-type', 'x-effective-account-id', 'x-geo-country']) {
+      expect(sanitizeHeaders({ [name]: 'x' })).toEqual({})
+    }
+    expect(sanitizeHeaders({ 'x-sm-workspace-id': 'w', 'x-requested-account-id': 'a', 'x-idempotency-key': 'k' })).toEqual({ 'x-sm-workspace-id': 'w', 'x-requested-account-id': 'a', 'x-idempotency-key': 'k' })
+  })
+})

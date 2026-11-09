@@ -35,3 +35,10 @@ describe('SseParser', () => {
     expect(seen).toEqual(['1:queued', '2:running'])
   })
 })
+
+describe('SseParser edge cases', () => {
+  it('ignores a leading BOM', () => {
+    const parser = new SseParser()
+    expect(parser.push('﻿id: 7\ndata: x\n\n')).toEqual([{ id: '7', event: 'message', data: 'x' }])
+  })
+})

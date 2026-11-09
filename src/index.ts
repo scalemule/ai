@@ -1,6 +1,6 @@
 export { ScaleMuleAi, createAi, AiFacadeError, MAX_WAIT_MS } from './client'
 export type { ScaleMuleAiOptions } from './client'
-export { createFetchTransport, sanitizeHeaders } from './transport'
+export { createFetchTransport, sanitizeHeaders, isForbiddenHeader } from './transport'
 export type { AiTransport, AiTransportRequest, AiTransportResponse, FetchTransportOptions, HeaderSource } from './transport'
 export { generateIdempotencyKey } from './idempotency'
 export { SseParser, readSse } from './sse'

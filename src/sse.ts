@@ -47,7 +47,9 @@ function findBoundary(text: string): { index: number; length: number } | null {
   return { index: lf, length: 2 }
 }
 
-function parseBlock(block: string): SseMessage | null {
+function parseBlock(rawBlock: string): SseMessage | null {
+  // A UTF-8 BOM may precede the very first field; it is not part of the name.
+  const block = rawBlock.startsWith('\uFEFF') ? rawBlock.slice(1) : rawBlock
   let id: string | undefined
   let event = 'message'
   const data: string[] = []

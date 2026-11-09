@@ -90,7 +90,23 @@ async function parseError(response: AiTransportResponse): Promise<AiError> {
   if (requestId) result.requestId = requestId
   if (typeof error.field === 'string') result.field = error.field
   if (error.details !== undefined) result.details = error.details
+  const retryAfterMs = parseRetryAfter(response.headers.get('retry-after')) ?? retryAfterFromBody(error.details) ?? retryAfterFromBody(meta)
+  if (retryAfterMs !== undefined) result.retryAfterMs = retryAfterMs
   return result
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000)
+  const at = Date.parse(value)
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now())
+}
+
+function retryAfterFromBody(source: unknown): number | undefined {
+  if (!isRecord(source)) return undefined
+  const seconds = source.retry_after
+  return typeof seconds === 'number' && seconds >= 0 ? Math.round(seconds * 1000) : undefined
 }
 
 async function parseData<T>(response: AiTransportResponse): Promise<AiResult<T>> {
@@ -109,11 +125,8 @@ async function parseData<T>(response: AiTransportResponse): Promise<AiResult<T>>
 
 function retryDelayMs(error: AiError, attempt: number): number | null {
   if (error.status === 0 && error.code !== 'ABORTED') return 300 * 2 ** attempt
-  if (error.status === 429) {
-    const hint = isRecord(error.details) && typeof error.details.retry_after === 'number' ? error.details.retry_after * 1000 : 1_000
-    return Math.min(hint, 5_000)
-  }
-  if (error.status >= 500) return 300 * 2 ** attempt
+  if (error.status === 429) return Math.min(error.retryAfterMs ?? 1_000, 5_000)
+  if (error.status >= 500) return Math.min(error.retryAfterMs ?? 300 * 2 ** attempt, 5_000)
   return null
 }
 
@@ -141,7 +154,7 @@ export class ScaleMuleAi {
   private async send<T>(
     method: 'GET' | 'POST',
     path: string,
-    options: { body?: unknown; headers?: Record<string, string>; signal?: AbortSignal; retries?: number },
+    options: { body?: unknown; headers?: Record<string, string>; signal?: AbortSignal; retries?: number; timeoutMs?: number },
   ): Promise<AiResult<T>> {
     const retries = options.retries ?? 0
     let lastError: AiError | null = null
@@ -155,6 +168,7 @@ export class ScaleMuleAi {
           headers: options.headers,
           signal: options.signal,
           accept: 'json',
+          timeoutMs: options.timeoutMs,
         })
         result = await parseData<T>(response)
       } catch (cause) {
@@ -193,6 +207,7 @@ export class ScaleMuleAi {
         body,
         headers: { ...this.headersFor(options), 'x-idempotency-key': idempotencyKey },
         signal: options.signal,
+        timeoutMs: options.timeoutMs,
         retries: CREATE_RETRIES,
       })
     },
@@ -201,6 +216,7 @@ export class ScaleMuleAi {
       return this.send<AiRun<TOutput>>('GET', `/runs/${encodeURIComponent(runId)}`, {
         headers: this.headersFor(options),
         signal: options.signal,
+        timeoutMs: options.timeoutMs,
         retries: 1,
       })
     },
@@ -209,6 +225,7 @@ export class ScaleMuleAi {
       return this.send<AiRun<TOutput>>('POST', `/runs/${encodeURIComponent(runId)}/cancel`, {
         headers: this.headersFor(options),
         signal: options.signal,
+        timeoutMs: options.timeoutMs,
       })
     },
 
@@ -247,6 +264,7 @@ export class ScaleMuleAi {
         [Symbol.asyncIterator]: async function* () {
           let after = options.after ?? 0
           let reconnects = 0
+          let lastDropCause: unknown
           const maxReconnects = options.maxReconnects ?? 5
           for (;;) {
             const headers = self.headersFor(options)
@@ -272,28 +290,40 @@ export class ScaleMuleAi {
             }
             if (!response.body) throw new AiFacadeError(localError('INVALID_RESPONSE', 'The event stream has no body'))
             let ended = false
-            for await (const message of readSse(response.body, options.signal)) {
-              if (message.event === 'end') {
-                ended = true
-                break
+            try {
+              for await (const message of readSse(response.body, options.signal)) {
+                if (message.event === 'end') {
+                  ended = true
+                  break
+                }
+                if (!message.data) continue
+                let parsed: unknown
+                try {
+                  parsed = JSON.parse(message.data)
+                } catch {
+                  continue
+                }
+                if (!isRecord(parsed)) continue
+                const event = parsed as unknown as AiRunEvent
+                if (typeof event.sequence === 'number' && event.sequence > after) after = event.sequence
+                yield event
+                if (isTerminalStatus(event.type)) {
+                  ended = true
+                }
               }
-              if (!message.data) continue
-              let parsed: unknown
-              try {
-                parsed = JSON.parse(message.data)
-              } catch {
-                continue
-              }
-              if (!isRecord(parsed)) continue
-              const event = parsed as unknown as AiRunEvent
-              if (typeof event.sequence === 'number' && event.sequence > after) after = event.sequence
-              yield event
-              if (isTerminalStatus(event.type)) {
-                ended = true
-              }
+            } catch (cause) {
+              // A mid-stream drop is a disconnect, not a failure: reconnect
+              // below with Last-Event-ID unless the caller aborted.
+              if (options.signal?.aborted) return
+              lastDropCause = cause
             }
             if (ended || options.signal?.aborted) return
-            if (reconnects >= maxReconnects) return
+            if (reconnects >= maxReconnects) {
+              // Never let the consumer mistake "gave up" for "finished".
+              throw new AiFacadeError(
+                localError('STREAM_INCOMPLETE', 'The event stream dropped before the run finished and could not be resumed', lastDropCause),
+              )
+            }
             reconnects += 1
             await sleep(Math.min(1_000 * reconnects, 5_000), options.signal)
           }
@@ -333,7 +363,9 @@ export class ScaleMuleAi {
     if (run.status === 'succeeded' && run.output && typeof run.output.summary === 'string') {
       return { data: { ...run.output, run }, error: null }
     }
-    const code = run.error?.code ?? (run.status === 'succeeded' ? 'RUN_OUTPUT_EXPIRED' : `RUN_${run.status.toUpperCase()}`)
+    const code =
+      run.error?.code ??
+      (run.status === 'succeeded' ? (run.output_expired ? 'RUN_OUTPUT_EXPIRED' : 'OUTPUT_UNAVAILABLE') : `RUN_${run.status.toUpperCase()}`)
     const message = run.error?.message ?? `The summarize run ended with status ${run.status}`
     return { data: null, error: { code, message, status: 200, run } }
   }

@@ -166,3 +166,63 @@ describe('ScaleMuleAi.runs.events', () => {
     }).rejects.toBeInstanceOf(AiFacadeError)
   })
 })
+
+describe('ScaleMuleAi resilience', () => {
+  it('reconnects with Last-Event-ID after a mid-stream drop and keeps going', async () => {
+    let call = 0
+    const seenHeaders: Array<string | undefined> = []
+    const transport: AiTransport = {
+      send: vi.fn(async (request: AiTransportRequest) => {
+        call += 1
+        if (call === 1) {
+          // Deliver one event, then fail the next read (a reset mid-stream).
+          let pulls = 0
+          const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1
+              if (pulls === 1) {
+                controller.enqueue(new TextEncoder().encode('id: 1\nevent: queued\ndata: {"run_id":"r","sequence":1,"type":"queued","at":"t"}\n\n'))
+              } else {
+                controller.error(new Error('connection reset'))
+              }
+            },
+          })
+          return { status: 200, headers: new Headers(), body, json: async () => ({}), text: async () => '' }
+        }
+        seenHeaders.push(request.headers?.['last-event-id'])
+        return streamResponse('id: 2\nevent: succeeded\ndata: {"run_id":"r","sequence":2,"type":"succeeded","at":"t"}\n\nevent: end\ndata: terminal\n\n')
+      }),
+    }
+    const ai = new ScaleMuleAi({ transport })
+    const seen: number[] = []
+    for await (const event of ai.runs.events('r')) seen.push(event.sequence)
+    expect(seen).toEqual([1, 2])
+    expect(call).toBe(2)
+    expect(seenHeaders).toEqual(['1'])
+  })
+
+  it('throws STREAM_INCOMPLETE instead of ending silently when reconnects are exhausted', async () => {
+    const transport: AiTransport = {
+      send: vi.fn(async () => streamResponse('id: 1\nevent: running\ndata: {"run_id":"r","sequence":1,"type":"running","at":"t"}\n\n')),
+    }
+    const ai = new ScaleMuleAi({ transport })
+    await expect(async () => {
+      for await (const _event of ai.runs.events('r', { maxReconnects: 0 })) {
+        // consume
+      }
+    }).rejects.toMatchObject({ error: { code: 'STREAM_INCOMPLETE' } })
+  })
+
+  it('passes timeoutMs to the transport and honours Retry-After on 429', async () => {
+    const { transport, requests } = fakeTransport((_request, call) =>
+      call === 1
+        ? jsonResponse(429, { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'slow down' } }, { 'retry-after': '0' })
+        : jsonResponse(200, { success: true, data: run() }),
+    )
+    const ai = new ScaleMuleAi({ transport })
+    const result = await ai.runs.get('run-1', { timeoutMs: 1234 })
+    expect(result.error).toBeNull()
+    expect(requests[0]?.timeoutMs).toBe(1234)
+    expect(requests).toHaveLength(2)
+  })
+})
