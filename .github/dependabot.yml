@@ -1,0 +1,17 @@
+# Dependabot (2026-11-22 security program).
+# npm: security updates only. `open-pull-requests-limit: 0` turns routine
+# version-bump PRs off; Dependabot security updates (enabled in the repo
+# settings) still open, grouped into one PR per advisory batch.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
